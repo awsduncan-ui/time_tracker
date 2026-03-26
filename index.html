@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Time Tracker</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+    }
+    .sub {
+      color: #6b7280;
+      margin: 0 0 20px;
+    }
+    .panel {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    input[type="text"] {
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    #newTaskName {
+      flex: 1;
+      min-width: 220px;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .primary {
+      background: #111827;
+      color: white;
+    }
+    .secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .danger {
+      background: #dc2626;
+      color: white;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .task-card {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .task-name {
+      width: 100%;
+      margin-bottom: 12px;
+      font-weight: bold;
+    }
+    .time {
+      font-size: 30px;
+      font-weight: bold;
+      margin: 8px 0 4px;
+    }
+    .small {
+      color: #6b7280;
+      margin-bottom: 12px;
+    }
+    .task-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .note {
+      font-size: 13px;
+      color: #6b7280;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Task Time Tracker</h1>
+    <p class="sub">Track time across tasks during the day. Your data is saved in your browser.</p>
+
+    <div class="panel">
+      <div><strong>Today total:</strong> <span id="totalHM">0h 0m</span></div>
+      <div id="totalClock">00:00:00</div>
+    </div>
+
+    <div class="panel controls">
+      <input id="newTaskName" type="text" placeholder="Add a new task" />
+      <button class="primary" id="addBtn">Add task</button>
+      <button class="secondary" id="resetAllBtn">Reset all</button>
+      <button class="secondary" id="exportBtn">Export CSV</button>
+    </div>
+
+    <div id="taskGrid" class="grid"></div>
+
+    <div class="note">Save this as a .html file and open it in any browser.</div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'task_time_tracker_html_v3';
+
+    function makeId() {
+      return 'task_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    }
+
+    function getTodayKey() {
+      const d = new Date();
+      return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+    }
+
+    function createTask(name) {
+      return {
+        id: makeId(),
+        name: name,
+        elapsedMs: 0,
+        isRunning: false,
+        startedAt: null
+      };
+    }
+
+    function defaultTasks() {
+      return [
+        createTask('Research'),
+        createTask('Emails'),
+        createTask('Writing'),
+        createTask('Calls'),
+        createTask('Admin')
+      ];
+    }
+
+    function formatClock(ms) {
+      const safeMs = Number.isFinite(ms) && ms > 0 ? ms : 0;
+      const totalSeconds = Math.floor(safeMs / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      return String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    }
+
+    function formatHM(ms) {
+      const safeMs = Number.isFinite(ms) && ms > 0 ? ms : 0;
+      const totalMinutes = Math.floor(safeMs / 60000);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return hours + 'h ' + minutes + 'm';
+    }
+
+    function getCurrentElapsed(task) {
+      if (!task.isRunning || task.startedAt === null) return task.elapsedMs;
+      return task.elapsedMs + Math.max(0, Date.now() - task.startedAt);
+    }
+
+    function loadState() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return { date: getTodayKey(), tasks: defaultTasks() };
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const tasks = Array.isArray(parsed.tasks) ? parsed.tasks : defaultTasks();
+        if (parsed.date !== getTodayKey()) {
+          return {
+            date: getTodayKey(),
+            tasks: tasks.map(function(task) {
+              return {
+                id: task.id || makeId(),
+                name: task.name || 'Task',
+                elapsedMs: 0,
+                isRunning: false,
+                startedAt: null
+              };
+            })
+          };
+        }
+        return {
+          date: parsed.date || getTodayKey(),
+          tasks: tasks.map(function(task) {
+            return {
+              id: task.id || makeId(),
+              name: typeof task.name === 'string' ? task.name : 'Task',
+              elapsedMs: Number(task.elapsedMs) || 0,
+              isRunning: Boolean(task.isRunning),
+              startedAt: task.startedAt === null || typeof task.startedAt === 'number' ? task.startedAt : null
+            };
+          })
+        };
+      } catch (e) {
+        return { date: getTodayKey(), tasks: defaultTasks() };
+      }
+    }
+
+    let state = loadState();
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        date: getTodayKey(),
+        tasks: state.tasks
+      }));
+    }
+
+    function runTests() {
+      console.assert(typeof makeId() === 'string', 'makeId returns a string');
+      console.assert(formatClock(0) === '00:00:00', 'formatClock handles zero');
+      console.assert(formatClock(3661000) === '01:01:01', 'formatClock handles hh:mm:ss');
+      console.assert(formatHM(0) === '0h 0m', 'formatHM handles zero');
+      console.assert(formatHM(5400000) === '1h 30m', 'formatHM handles hours and minutes');
+      const stopped = { elapsedMs: 120000, isRunning: false, startedAt: null };
+      console.assert(getCurrentElapsed(stopped) === 120000, 'stopped task keeps elapsed time');
+      const running = { elapsedMs: 120000, isRunning: true, startedAt: Date.now() - 60000 };
+      const current = getCurrentElapsed(running);
+      console.assert(current >= 179000 && current <= 181000, 'running task includes current time');
+      console.assert(defaultTasks().length === 5, 'defaultTasks creates five tasks');
+    }
+
+    function render() {
+      const grid = document.getElementById('taskGrid');
+      grid.innerHTML = '';
+      let totalMs = 0;
+
+      state.tasks.forEach(function(task) {
+        const value = getCurrentElapsed(task);
+        totalMs += value;
+
+        const card = document.createElement('div');
+        card.className = 'task-card';
+
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'task-name';
+        nameInput.value = task.name;
+        nameInput.addEventListener('input', function(e) {
+          renameTask(task.id, e.target.value);
+        });
+
+        const time = document.createElement('div');
+        time.className = 'time';
+        time.textContent = formatClock(value);
+
+        const small = document.createElement('div');
+        small.className = 'small';
+        small.textContent = formatHM(value);
+
+        const buttons = document.createElement('div');
+        buttons.className = 'task-buttons';
+
+        const startPauseBtn = document.createElement('button');
+        startPauseBtn.className = 'primary';
+        startPauseBtn.textContent = task.isRunning ? 'Pause' : 'Start';
+        startPauseBtn.addEventListener('click', function() {
+          toggleTask(task.id);
+        });
+
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'secondary';
+        resetBtn.textContent = 'Reset';
+        resetBtn.addEventListener('click', function() {
+          resetTask(task.id);
+        });
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'danger';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.addEventListener('click', function() {
+          deleteTask(task.id);
+        });
+
+        buttons.appendChild(startPauseBtn);
+        buttons.appendChild(resetBtn);
+        buttons.appendChild(deleteBtn);
+
+        card.appendChild(nameInput);
+        card.appendChild(time);
+        card.appendChild(small);
+        card.appendChild(buttons);
+
+        grid.appendChild(card);
+      });
+
+      document.getElementById('totalHM').textContent = formatHM(totalMs);
+      document.getElementById('totalClock').textContent = formatClock(totalMs);
+    }
+
+    function addTask() {
+      const input = document.getElementById('newTaskName');
+      const name = input.value.trim();
+      if (!name) return;
+      state.tasks.push(createTask(name));
+      input.value = '';
+      saveState();
+      render();
+    }
+
+    function renameTask(id, name) {
+      const task = state.tasks.find(function(t) { return t.id === id; });
+      if (!task) return;
+      task.name = name;
+      saveState();
+    }
+
+    function toggleTask(id) {
+      state.tasks = state.tasks.map(function(task) {
+        if (task.id !== id) return task;
+        if (task.isRunning && task.startedAt !== null) {
+          return {
+            id: task.id,
+            name: task.name,
+            elapsedMs: task.elapsedMs + Math.max(0, Date.now() - task.startedAt),
+            isRunning: false,
+            startedAt: null
+          };
+        }
+        return {
+          id: task.id,
+          name: task.name,
+          elapsedMs: task.elapsedMs,
+          isRunning: true,
+          startedAt: Date.now()
+        };
+      });
+      saveState();
+      render();
+    }
+
+    function resetTask(id) {
+      state.tasks = state.tasks.map(function(task) {
+        if (task.id !== id) return task;
+        return {
+          id: task.id,
+          name: task.name,
+          elapsedMs: 0,
+          isRunning: false,
+          startedAt: null
+        };
+      });
+      saveState();
+      render();
+    }
+
+    function deleteTask(id) {
+      state.tasks = state.tasks.filter(function(task) {
+        return task.id !== id;
+      });
+      saveState();
+      render();
+    }
+
+    function resetAll() {
+      state.tasks = state.tasks.map(function(task) {
+        return {
+          id: task.id,
+          name: task.name,
+          elapsedMs: 0,
+          isRunning: false,
+          startedAt: null
+        };
+      });
+      saveState();
+      render();
+    }
+
+    function exportCSV() {
+      const rows = [['Task', 'Hours', 'Minutes']];
+      state.tasks.forEach(function(task) {
+        const totalMinutes = Math.floor(getCurrentElapsed(task) / 60000);
+        rows.push([task.name, String(Math.floor(totalMinutes / 60)), String(totalMinutes % 60)]);
+      });
+      const csv = rows.map(function(row) {
+        return row.map(function(value) {
+          return '"' + String(value).replace(/"/g, '""') + '"';
+        }).join(',');
+      }).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'time-tracking.csv';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('addBtn').addEventListener('click', addTask);
+    document.getElementById('resetAllBtn').addEventListener('click', resetAll);
+    document.getElementById('exportBtn').addEventListener('click', exportCSV);
+    document.getElementById('newTaskName').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') addTask();
+    });
+
+    runTests();
+    render();
+    saveState();
+    setInterval(render, 1000);
+  </script>
+</body>
+</html>
